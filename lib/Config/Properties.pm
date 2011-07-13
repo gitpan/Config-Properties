@@ -3,7 +3,7 @@ package Config::Properties;
 use strict;
 use warnings;
 
-our $VERSION = '1.71';
+our $VERSION = '1.72';
 
 use IO::Handle;
 use Carp;
@@ -48,15 +48,42 @@ use Carp;
 #   which is an instance of Config::Properties to be used as defaults
 #   for this object.
 sub new {
-    my ($class, $defaults) = @_;
+    my $class = shift;
+    my $defaults;
+    $defaults = shift if @_ & 1;
+    my %opts = @_;
+    $defaults = delete $opts{defaults} unless defined $defaults;
+    my $format = delete $opts{format};
+    $format = '%s=%s' unless defined $format;
+    my $file = delete $opts{file};
+    %opts and croak "invalid option(s) '" . join("', '", keys %opts) . "'";
+
+    if (defined $defaults) {
+        if (ref $defaults eq 'HASH') {
+            my $d = Config::Properties->new;
+            while (my ($k, $v) = each %$defaults) {
+                $d->setProperty($k, $v);
+            }
+            $defaults = $d;
+        }
+        elsif (!$defaults->isa('Config::Properties')) {
+            croak die "defaults parameter is not a Config::Properties object or a hash"
+        }
+    }
 
     my $self = { defaults => $defaults,
-		 format => '%s=%s',
+		 format => $format,
 		 properties => {},
 		 next_line_number => 1,
-		 property_line_numbers => {} };
+		 property_line_numbers => {},
+                 file => $file };
     bless $self, $class;
 
+    if (defined $file) {
+        open my $fh, '<', $file or croak "unable to open file '$file': $!";
+        $self->load($fh);
+        close $fh or croak "unable to load file '$file': $!";
+    }
     return $self;
 }
 
@@ -214,7 +241,7 @@ sub process_line {
     my $line=<$file>;
 
     defined $line or return undef;
-    my $ln=$self->{line_number}=$file->input_line_number;
+    my $ln = $self->{line_number} = $file->input_line_number;
     if ($ln == 1) {
         # remove utf8 byte order mark
         $line =~ s/$bomre//;
@@ -321,7 +348,7 @@ sub _save {
 
 #	save() - Save the properties to a filehandle with the given header.
 sub save {
-    my ($self, $file, $header)=@_;
+    my ($self, $file, $header) = @_;
     _t_file($file);
 
     if (defined $header) {
@@ -484,24 +511,24 @@ Config::Properties - Read and write property files
 
   # reading...
 
-  open PROPS, "< my_config.props"
+  open my $fh, '<', 'my_config.props'
     or die "unable to open configuration file";
 
-  my $properties = new Config::Properties();
-  $properties->load(*PROPS);
+  my $properties = Config::Properties->new();
+  $properties->load($fh);
 
-  $value = $properties->getProperty( $key );
+  $value = $properties->getProperty($key);
 
 
   # saving...
 
-  open PROPS, "> my_config.props"
+  open my $fh, '>', 'my_config.props'
     or die "unable to open configuration file for writing";
 
-  $properties->setProperty( $key, $value );
+  $properties->setProperty($key, $value);
 
-  $properties->format( '%s => %s' );
-  $properties->store(*PROPS, $header );
+  $properties->format('%s => %s');
+  $properties->store($fh, $header );
 
 
 =head1 DESCRIPTION
@@ -535,11 +562,11 @@ printf and must contain exactly two %s format characters. The first
 will be replaced with the key of the property and the second with the
 value. The string can contain no other printf control characters, but
 can be anything else. A newline will be automatically added to the end
-of the string. You an get the current format string either by using
+of the string. The current format string can be obtained by using
 $object->format() (with no arguments) or $object->getFormat().
 
-If a recent version of module L<Text::Wrap> is available, long lines
-are conveniently wrapped when saving.
+If a recent version of L<Text::Wrap> is available, long lines are
+conveniently wrapped when saving.
 
 =head1 METHODS
 
@@ -547,13 +574,44 @@ C<Config::Property> objects have this set of methods available:
 
 =over 4
 
-=item Config::Properties-E<gt>new()
+=item Config::Properties-E<gt>new(%opts)
+
+Creates a new Config::Properties object.
+
+The optional arguments are as follows:
+
+=over 4
+
+=item file => $filename
+
+Opens and reads the entries from the given properties file
+
+=item format => $format
+
+Sets the format using for saving the properties to a file. See
+L</setFormat>.
+
+=item defaults => $defaults
+
+Default configuration values.
+
+The given parameter can be a hash reference or another
+Config::Properties object.
+
+In that way several configuration objects can be chained. For
+instance:
+
+  my %defaults = (...);
+  my $global_config = Config::Properties->new(file => '/etc/foo.properties',
+                                              defaults => \%defaults);
+  my $user_config = Config::Properties->new(file => '/home/jsmith/.foo/foo.properties',
+                                            defaults => $global_config);
+
+=back
 
 =item Config::Properties-E<gt>new($defaults)
 
-creates a new Config::Properties object. The optional C<$defaults>
-parameter can be used to pass another Config::Properties object
-holding default property values.
+Calling C<new> in this way is deprecated.
 
 =item $p-E<gt>getProperty($k, $default, $default2, ...)
 
@@ -723,7 +781,7 @@ string with the content.
 
 =item $p-E<gt>setFormat($f)
 
-get/set the format string used when saving the object to a file.
+X<setFormat>get/set the format string used when saving the object to a file.
 
 =back
 
@@ -746,7 +804,7 @@ maintainer.
 
 Copyright 2001, 2002 by Randy Jay Yarger
 Copyright 2002, 2003 by Craig Manley.
-Copyright 2003-2006 by Salvador FandiE<ntilde>o.
+Copyright 2003-2009, 2011 by Salvador FandiE<ntilde>o.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
